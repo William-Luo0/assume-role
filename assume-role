@@ -66,6 +66,7 @@ assume-role(){
   role_input=$2
   mfa_token_input=$3
   aws_region_input=$4
+  no_ssl=${5:-"false"}
 
   # DEFAULT VARIABLES
   ACCOUNTS_FILE=${ACCOUNTS_FILE:-~/.aws/accounts}
@@ -122,7 +123,12 @@ assume-role(){
   fi
 
   # set region
-  AWS_CONFIG_REGION="$(aws configure get region)"
+  if [ "$no_ssl" = "true" ]; then
+    AWS_CONFIG_REGION="$(aws configure get region --no-verify-ssl)"
+  else
+    AWS_CONFIG_REGION="$(aws configure get region)"
+  fi
+
   if [ -z "$aws_region_input" ] && [ -z "$AWS_REGION" ] && [ -z "$AWS_DEFAULT_REGION" ] && [ -z "$AWS_CONFIG_REGION" ] && [ -z "$OUTPUT_TO_EVAL" ]; then
     echo -n "Assume Into Region [us-east-1]: "
     read -r region
@@ -173,17 +179,28 @@ assume-role(){
     fi
 
     # get the username attached to your default creds
-    AWS_USERNAME=$(aws iam get-user --query User.UserName --output text)
+    if [ "$no_ssl" = "true" ]; then
+      AWS_USERNAME=$(aws iam get-user --query User.UserName --output text --no-verify-ssl)
+    else
+      AWS_USERNAME=$(aws iam get-user --query User.UserName --output text)
+    fi
 
     # get MFA device attached to default creds
     MFA_DEVICE_ARGS=(--user-name $AWS_USERNAME)
     MFA_DEVICE_ARGS+=(--query 'MFADevices[0].SerialNumber')
     MFA_DEVICE_ARGS+=(--output text)
+    if [ "$no_ssl" = "true" ]; then
+      MFA_DEVICE_ARGS+=(--no-verify-ssl)
+    fi
     MFA_DEVICE=$(aws iam list-mfa-devices "${MFA_DEVICE_ARGS[@]}")
     MFA_DEVICE_STATUS=$?
 
     if [ $MFA_DEVICE_STATUS -ne 0 ]; then
-      echo_out "aws iam list-mfa-devices error"
+      if [ "$no_ssl" = "true" ]; then
+        echo_out "aws iam list-mfa-devices error --no-verify-ssl"
+      else
+        echo_out "aws iam list-mfa-devices error"
+      fi
       return
     fi
 
@@ -191,11 +208,18 @@ assume-role(){
     SESSION_ARGS=(--duration-seconds $SESSION_TIMEOUT)
     SESSION_ARGS+=(--serial-number ${MFA_DEVICE})
     SESSION_ARGS+=(--token-code ${mfa_token})
+    if [ "$no_ssl" = "true" ]; then
+      SESSION_ARGS+=(--no-verify-ssl)
+    fi
     SESSION=$(aws sts get-session-token "${SESSION_ARGS[@]}")
     SESSION_STATUS=$?
 
     if [ $SESSION_STATUS -ne 0 ]; then
-      echo_out "aws sts get-session-token error"
+      if [ "$no_ssl" = "true" ]; then
+        echo_out "aws sts get-session-token error --no-verify-ssl"
+      else
+        echo_out "aws sts get-session-token error"
+      fi
       return
     fi
 
@@ -216,6 +240,9 @@ assume-role(){
   ROLE_SESSION_ARGS+=(--external-id ${account_id})
   ROLE_SESSION_ARGS+=(--duration-seconds ${ROLE_SESSION_TIMEOUT})
   ROLE_SESSION_ARGS+=(--role-session-name $(date +%s))
+  if [ "$no_ssl" = "true" ]; then
+    ROLE_SESSION_ARGS+=(--no-verify-ssl)
+  fi
   ROLE_SESSION=$(aws sts assume-role "${ROLE_SESSION_ARGS[@]}" || echo "fail")
 
   if [ "$ROLE_SESSION" = "fail" ]; then
@@ -266,7 +293,7 @@ assume-role(){
 # from https://stackoverflow.com/questions/2683279/how-to-detect-if-a-script-is-being-sourced
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   # If the script is being sourced, do nothing
-  # Supports `source $(which assume_role)` in rc file for bash and zsh
+  # Supports `source $(which_role)` in rc file for bash and zsh
   : # noop
 elif [[ "init" == "${1}" ]]; then
   # TODO: This will be multi-shell support like rbenv, e.g. fish
